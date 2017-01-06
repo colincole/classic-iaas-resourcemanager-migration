@@ -46,10 +46,10 @@ Select-AzureRmSubscription -SubscriptionId "{subscriptionId}"</pre>
             <li>
                 <p>If your template contains VMs, run the script to snapshot and copy the VHDs from your source to your target 
                     storage accounts</p>
-<pre>{migAzPath}BlobCopy.ps1 -ResourcegroupName "{resourceGroupName}" `
+<pre>&amp; '{migAzPath}BlobCopy.ps1' -ResourcegroupName "{resourceGroupName}" `
     -DetailsFilePath "{blobDetailsPath}" -StartType StartBlobCopy
     
-{migAzPath}BlobCopy.ps1 -ResourcegroupName "{resourceGroupName}" `
+&amp; '{migAzPath}BlobCopy.ps1' -ResourcegroupName "{resourceGroupName}" `
     -DetailsFilePath "{blobDetailsPath}" -StartType MonitorBlobCopy
 </pre>
             </li>
