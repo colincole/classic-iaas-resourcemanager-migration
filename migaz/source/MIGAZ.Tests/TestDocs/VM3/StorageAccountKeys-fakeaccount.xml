@@ -1,8 +1,0 @@
-﻿<?xml version="1.0" encoding="utf-8" ?>
-<StorageService xmlns="http://schemas.microsoft.com/windowsazure">
-  <Url>storage-service-url</Url>
-  <StorageServiceKeys>
-    <Primary>primary-key</Primary>
-    <Secondary>secondary-key</Secondary>
-  </StorageServiceKeys>
-</StorageService>
