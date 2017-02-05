@@ -4,13 +4,14 @@
 Purpose: Retrieves the status of an actual ARM migration using the Migration API Move-AzureVirtualNetwork cmdlet.  This will show each cloud service as its being prepared and committed to ARM.
 This is a helper Script that can make REST API calls for and pull back metadata for all production deployments in a subscription
 
-Two parameters 
+Three parameters 
     -- subscription ID
     -- CSV from metadata extract
+    -- AzureAD tenant
 
 Sample Command:
 
-.\MetadataExtract.ps1 -subscriptionID 98f9a3cd-a241-4ad0-9057-8d8cff55ca1f
+.\MetadataExtract.ps1 -subscriptionID 98f9a3cd-a241-4ad0-9057-8d8cff55ca1f -Csv "file.csv" -AzureAdTenant org.onmicrosoft.com
  
 #>
 
@@ -19,9 +20,42 @@ Param
 (
     [Parameter(Mandatory=$true)]         # subscription id
     [string]$SubscriptionID,
-    [Parameter(Mandatory=$true)]         # csv containing the services to check migration status
-    [string]$Csv    
+    [Parameter(Mandatory=$true)]         # csv containing the services to check migration status. Alternatively, Can comment this out and run a query to select services.
+    [string]$Csv,
+    [Parameter(Mandatory=$true)]         # AAD tenant name -- needed to establish a bearer token. i.e. xxxx.onmicrosoft.com. For Microsoft subscriptions, use: microsoft.onmicrosoft.com 
+    [string]$AzureAdTenant 
 )
+
+function GetAuthToken
+{
+    # Obtained from: https://blogs.technet.microsoft.com/stefan_stranger/2016/10/21/using-the-azure-arm-rest-apin-get-access-token/
+    param
+    (
+            [Parameter(Mandatory=$true)]
+            $ApiEndpointUri,
+         
+            [Parameter(Mandatory=$true)]
+            $AADTenant
+    )
+  
+    $adal = "${env:ProgramFiles(x86)}\Microsoft SDKs\Azure\PowerShell\ServiceManagement\Azure\Services\" + `
+                "Microsoft.IdentityModel.Clients.ActiveDirectory.dll"
+    $adalforms = "${env:ProgramFiles(x86)}\Microsoft SDKs\Azure\PowerShell\ServiceManagement\Azure\Services\" + `
+                    "Microsoft.IdentityModel.Clients.ActiveDirectory.WindowsForms.dll"
+    
+    [System.Reflection.Assembly]::LoadFrom($adal) | Out-Null
+    [System.Reflection.Assembly]::LoadFrom($adalforms) | Out-Null
+    
+    $clientId = "1950a258-227b-4e31-a9cf-717495945fc2"
+    $redirectUri = "urn:ietf:wg:oauth:2.0:oob"
+    $authorityUri = “https://login.windows.net/$aadTenant”
+    
+    $authContext = New-Object "Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationContext" -ArgumentList $authorityUri
+    
+    $authResult = $authContext.AcquireToken($ApiEndpointUri, $clientId,$redirectUri, "Auto")
+  
+    return $authResult
+} 
 
 Select-AzureSubscription -SubscriptionId $subscriptionID
 $subscription = Get-AzureSubscription -SubscriptionId $subscriptionID
@@ -38,70 +72,25 @@ foreach ($item in $csvItems)
     }
 }
 
+#Uncomment the $services query and change code -- if checking cloud services through query instead of CSV
 #Write-Host "Selecting the cloud services within the subscription" 
 #$services = Get-AzureService  #| Where-Object {$_.ServiceName.StartsWith("b")}  
 
-
-if ($subscription) {
-    if($ARMTenantAccessTokensARM.count -eq 0) {
-        Connect-ARM
-    }
-    else {        
-        if ($subscription) {
-            $ARMSubscriptions.Keys | % {if($_ -eq $subscription.SubscriptionName){$val = $ARMSubscriptions.Item($_);$global:tenantId = $val.tenantId}}
-        }
-        if($ARMTenantAccessTokensARM){
-            $ARMTenantAccessTokensARM.Keys | %{if($_ -eq $global:tenantId){$Global:accessToken = $ARMTenantAccessTokensARM.Item($_)}} 
-        }
-        $token = ''
-        $token = 'Bearer ' + $Global:accessToken
-        $uri = "https://management.core.windows.net/" + $subscription.SubscriptionId +"/services/hostedservices/" + $csList[0] + "/deploymentslots/Production"
-        $header = @{"x-ms-version" = "2015-10-01";"Authorization" = $token}
-        $xml = try {Invoke-RestMethod -Uri $uri -Method Get -Headers $header} catch {$_.exception.response}
-        if($xml.StatusCode -eq 'Unauthorized') {Connect-ARM}
-   }
-}
-else {
-    write-Host -ForegroundColor Yellow "Please set a default subscription using Select-AzureSubscription cmdlet"
-}
-
-if ($subscription) {
-    $ARMSubscriptions.Keys | % {if($_ -eq "Cloudguy's World"){$val = $ARMSubscriptions.Item($_);$global:tenantId = $val.tenantId}}
-}
-else {
-    write-Host -ForegroundColor Yellow "Please set a default subscription using Select-AzureSubscription cmdlet"
-}
-
-if($ARMTenantAccessTokensARM){
-    $ARMTenantAccessTokensARM.Keys | %{if($_ -eq $global:tenantId){$Global:accessToken = $ARMTenantAccessTokensARM.Item($_)}} 
-}
-else {
-    write-Host -ForegroundColor Yellow "Please Install the ARM Helper cmdlets using Install-ARMModule.ps1 and then run Conect-ARM cmdlet"
-}
-
-$token = ''
-$token = 'Bearer ' + $Global:accessToken
+$ApiEndpointUri = "https://management.core.windows.net/"
+# Getting authentication token
+$token = GetAuthToken -ApiEndPointUri $ApiEndpointUri -AADTenant $AzureAdTenant
 
 Write-Host "Now walking through each cloud service deployment and retrieving its metadata"
-
 
 foreach ($svc in $csList.Keys)
 {
     $uri = "https://management.core.windows.net/" + $subscription.SubscriptionId +"/services/hostedservices/" + $svc + "/deploymentslots/Production"
-    $header = @{"x-ms-version" = "2015-10-01";"Authorization" = $token}
+    $header = @{"x-ms-version" = "2015-10-01";'Authorization'=$token.CreateAuthorizationHeader()}
 
     $xml = try {Invoke-RestMethod -Uri $uri -Method Get -Headers $header} catch {$_.exception.response}
 
-    if($xml.StatusCode -eq 'NotFound') 
+    if($xml.StatusCode -ne 'NotFound') 
     {
-        write-host -ForegroundColor Yellow ("Status Code for GET Cloud Service: " + $svc + "  Status: " +  $xml.StatusCode)
-    }
-    else
-    {
-        $deployments = $deployments + $xml.InnerXml
-    }
-
-    if($xml.StatusCode -ne 'NotFound') {
         if($xml.Deployment.RoleList.Role.MigrationState)
         {
             if ($xml.Deployment.RoleList.Role.MigrationState -eq "Prepared")
@@ -110,7 +99,7 @@ foreach ($svc in $csList.Keys)
             }
             elseif ($xml.Deployment.RoleList.Role.MigrationState -eq "Preparing")
             {
-                Write-Host -ForegroundColor Yellow "Migration State for" $svc ":" $xml.Deployment.RoleList.Role.MigrationState
+                Write-Host -ForegroundColor Magenta "Migration State for" $svc ":" $xml.Deployment.RoleList.Role.MigrationState
             }
             elseif ($xml.Deployment.RoleList.Role.MigrationState -eq "Committing")
             {
@@ -118,20 +107,33 @@ foreach ($svc in $csList.Keys)
             }
             elseif ($xml.Deployment.RoleList.Role.MigrationState -eq "Committed")
             {
-                Write-Host -ForegroundColor Cyan "Migration State for" $svc ":" $xml.Deployment.RoleList.Role.MigrationState
+                Write-Host -ForegroundColor Green "Migration State for" $svc ":" $xml.Deployment.RoleList.Role.MigrationState
+            }
+            elseif ($xml.Deployment.RoleList.Role.MigrationState -eq "Aborting")
+            {
+                Write-Host -ForegroundColor Magenta "Migration State for" $svc ":" $xml.Deployment.RoleList.Role.MigrationState
+            }
+            elseif ($xml.Deployment.RoleList.Role.MigrationState -eq "Aborted")
+            {
+                Write-Host -ForegroundColor Green "Migration State for" $svc ":" $xml.Deployment.RoleList.Role.MigrationState
+            }
+            elseif ($xml.Deployment.RoleList.Role.MigrationState -eq $null)
+            {
+                Write-Host -ForegroundColor Yellow "Migration State for" $svc ":" $xml.Deployment.RoleList.Role.MigrationState
             }
             else
             {
                 Write-Host -ForegroundColor Red "Migration State for" $svc ":" $xml.Deployment.RoleList.Role.MigrationState
             }
         }
-        else{
+        else
+        {
             Write-Host -ForegroundColor Yellow "Migration State for" $svc ": NotPrepared"
         }
     }
     else
     {
-        write-host -ForegroundColor Green "Status Code for GET Cloud Service: " $xml.StatusCode
+        write-host -ForegroundColor Cyan ("Status Code for GET Cloud Service: " + $svc + " Status: cloud service not found or completed migration.")
     }
 }
 
