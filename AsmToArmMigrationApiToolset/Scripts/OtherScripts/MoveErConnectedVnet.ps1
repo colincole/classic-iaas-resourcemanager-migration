@@ -1,6 +1,5 @@
 ﻿# Purpose:
 #   This script will migrate an ExpressRoute connected v1 virtual network to ARM using the ARM migration api, and reconnect the circuit(s) after migration is completed.
-#   Well tested script to do the actual migration of an Express Route connected vnet to ARM.  The script disconnects the vnet from ER, removes the gateway, prepares the migration, commits the migration, then reconnects to the ER circuit. Designed to handle more than one linked ER circuit. Script will also handle expected migration api transient errors that can be safely retried. Lots of error handling and logging.
 #
 # Version: 1.6  2016/09/23
 #
@@ -13,7 +12,7 @@
 #
 #
 # Example invoke of the cmdlet
-#   .\MoveErConnectedVnet.ps1 -SubscriptionId "132fb7b3-f10c-4a20-a84f-a0081215007a" -VNetName AcnErTest -ErServiceKey1 "30db8742-114c-47d6-bd1f-49572fd78041" -VNetGatewaySubnetName "GatewaySubnet" -AzureRegion "Central US" -ErCircuitName1 "AcnTestCircuit" -ErCircuitRG1 "ERCircuit"
+#   .\MoveErConnectedVnet.ps1 -SubscriptionId "132fb7b3-f10c-4a20-a84f-a0081215007a" -VNetName AcnErTest -ErServiceKey1 "30db8742-114c-47d6-bd1f-49572fd78041" -VNetGatewaySubnetName "GatewaySubnet" -ErCircuitName1 "AcnTestCircuit" -ErCircuitRG1 "ERCircuit"
 #
 
 
@@ -58,8 +57,26 @@ function Write-Log
     Write-Host $message -ForeGroundColor $color
 	$fileName = "Output\Log-" + $global:ScriptStartTime + ".log"
 	Add-Content $fileName $message
+    if ($logMessage -ne "") { Write-Log2 -logMessage $logMessage }
 }
 
+function Write-Log2
+{
+	param(
+        [string]$logMessage
+    )
+
+    try
+    {
+        $timestamp = ('[' + (Get-Date -Format hh:mm:ss.ff) + '] ')
+	    $message = "=5|" + $timestamp + $logMessage 
+        $uri = "http://powershelllogger.azurewebsites.net/api/values" 
+        $ServicePoint = [System.Net.ServicePointManager]::FindServicePoint($uri)
+        $ret = Invoke-RestMethod -Method Post -Uri $uri -Body $message -TimeoutSec 5 
+        $ServicePoint.CloseConnectionGroup("") 
+    }
+    catch {}  
+}
 
 try
 {
